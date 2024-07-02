@@ -1,0 +1,10 @@
+.env
+.direnv
+.devenv
+pheno.txt
+covars.txt
+covars2.txt
+plink_scripts.sh
+.Rlib
+qc
+tmp
