@@ -32,6 +32,7 @@
                 {
                   packages = with pkgs; with rPackages; [
                     plink-ng
+                    bcftools
 
                     languageserver
                     glibcLocales
@@ -40,6 +41,7 @@
                     ggplot2
                     cowplot
                     dotenv
+                    tidyverse
                   ];
 
                   languages.r = {
