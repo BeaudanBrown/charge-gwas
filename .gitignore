@@ -8,3 +8,4 @@ plink_scripts.sh
 .Rlib
 qc
 tmp
+.pre-commit-config.yaml

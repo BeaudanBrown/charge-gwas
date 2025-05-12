@@ -1,80 +1,81 @@
 {
+  # ─────────────────────────────────── inputs ────────────────────────────────────
   inputs = {
-    nixpkgs.url = "github:cachix/devenv-nixpkgs/rolling";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     systems.url = "github:nix-systems/default";
-    devenv.url = "github:cachix/devenv";
-    devenv.inputs.nixpkgs.follows = "nixpkgs";
-  };
-
-  nixConfig = {
-    extra-trusted-public-keys = "devenv.cachix.org-1:w1cLUi8dv3hnoSPGAuibQv+f9TZLr6cv/Hm9XgU50cw=";
-    extra-substituters = "https://devenv.cachix.org";
-  };
-
-  outputs = { self, nixpkgs, devenv, systems, ... } @ inputs:
-    let
-      forEachSystem = nixpkgs.lib.genAttrs (import systems);
-    in
-    {
-      packages = forEachSystem (system: {
-        devenv-up = self.devShells.${system}.default.config.procfileScript;
-      });
-
-      devShells = forEachSystem
-        (system:
-          let
-            pkgs = nixpkgs.legacyPackages.${system};
-          in
-          {
-            default = devenv.lib.mkShell {
-              inherit inputs pkgs;
-              modules = [
-                {
-                  packages = with pkgs; with rPackages; [
-                    plink-ng
-                    bcftools
-
-                    languageserver
-                    glibcLocales
-                    qqman
-                    data_table
-                    ggplot2
-                    cowplot
-                    dotenv
-                    tidyverse
-                  ];
-
-                  languages.r = {
-                    enable = true;
-                  };
-
-
-                  languages.python = {
-                    enable = true;
-                    poetry = {
-                      enable = true;
-                      install = {
-                        enable = true;
-                        installRootPackage = false;
-                        onlyInstallRootPackage = false;
-                        compile = false;
-                        quiet = false;
-                        groups = [ ];
-                        ignoredGroups = [ ];
-                        onlyGroups = [ ];
-                        extras = [ ];
-                        allExtras = false;
-                        verbosity = "no";
-                      };
-                      activate.enable = true;
-                      package = pkgs.poetry;
-                    };
-                  };
-
-                  env.R_LIBS_USER = "./.Rlib";
-                }
-              ];
-            };
-          });
+    flake-utils = {
+      url = "github:numtide/flake-utils";
+      inputs.systems.follows = "systems";
     };
+    pre-commit-hooks.url = "github:cachix/git-hooks.nix";
+  };
+
+  # ────────────────────────────────── outputs ───────────────────────────────────
+  outputs = { self, nixpkgs, flake-utils, pre-commit-hooks, ... }:
+    flake-utils.lib.eachDefaultSystem (system:
+      let
+        pkgs = nixpkgs.legacyPackages.${system};
+      in
+        {
+        # ───────────────────────────────── checks ─────────────────────────────────
+        checks = {
+          pre-commit-check = pre-commit-hooks.lib.${system}.run {
+            src = ./.;
+            hooks = {
+              air-fmt = {
+                enable = true;
+                entry = "air format";
+                files = ".*\\.[rR]$";
+              };
+            };
+          };
+        };
+
+        # ───────────────────────────────── devShells ────────────────────────────────
+        devShells.default = pkgs.mkShell {
+          inherit (self.checks.${system}.pre-commit-check) shellHook;
+          env.R_LIBS_USER = "./.Rlib";
+
+          buildInputs = [
+            pkgs.bashInteractive
+            self.checks.${system}.pre-commit-check.enabledPackages
+          ];
+
+          packages =
+            with pkgs;
+            [
+              plink-ng
+              bcftools
+              R
+              quarto
+              air-formatter
+              (python3.withPackages (
+                python-pkgs: with python-pkgs; [
+                  (buildPythonPackage rec {
+                    pname = "pycap";
+                    version = "2.6.0";
+                    src = fetchPypi {
+                      inherit pname version;
+                      sha256 = "sha256-aNdAO/VzsDriTLJS+x5fc/42W2ydVMRhmQFO2v/Mj5Q=";
+                    };
+                    doCheck = false;
+                    checkInputs = [];
+                    propagatedBuildInputs = [];
+                    dependencies = [semantic-version];
+                  })
+                ]
+              ))
+            ]
+            ++ (with rPackages; [
+              languageserver
+              qqman
+              data_table
+              ggplot2
+              cowplot
+              dotenv
+              tidyverse
+            ]);
+        };
+      }
+    );
 }
