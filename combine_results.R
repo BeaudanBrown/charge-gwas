@@ -4,16 +4,14 @@ library(dotenv)
 
 # load env vars
 dotenv::load_dot_env()
-imp_folder  <- Sys.getenv("IMPUTATION_FOLDER")
+imp_folder <- Sys.getenv("IMPUTATION_FOLDER")
 gwas_folder <- Sys.getenv("GWAS_FOLDER")
 
 #-------------------------------------------------------------------------------
 # 1) Helper to read & bind a set of files matching a pattern
 #-------------------------------------------------------------------------------
 read_and_bind <- function(path, pattern, transform_fun = identity) {
-  files <- list.files(path = path,
-                      pattern = pattern,
-                      full.names = TRUE)
+  files <- list.files(path = path, pattern = pattern, full.names = TRUE)
   if (length(files) == 0L) {
     stop("No files found matching ", pattern, " in ", path)
   }
@@ -28,17 +26,18 @@ read_and_bind <- function(path, pattern, transform_fun = identity) {
 # 2) Read & reshape model1 results across all chrs
 #-------------------------------------------------------------------------------
 model1_results <- read_and_bind(
-
-  path    = gwas_folder,
+  path = gwas_folder,
   pattern = "_model1_results\\.assoc\\.linear$",
   transform_fun = function(dt) {
-    dt[, .(SNPID    = SNP,
-           n_total  = NMISS,
-           Chr      = CHR,
-           Position = BP,
-           Beta     = BETA,
-           SE       = SE,
-           Pval     = P)]
+    dt[, .(
+      SNPID = SNP,
+      n_total = NMISS,
+      Chr = CHR,
+      Position = BP,
+      Beta = BETA,
+      SE = SE,
+      Pval = P
+    )]
   }
 )
 # library(qqman) # nolint: commented_code_linter.
@@ -54,16 +53,18 @@ model1_results <- read_and_bind(
 # 3) Read & reshape model2 results across all chrs
 #-------------------------------------------------------------------------------
 model2_results <- read_and_bind(
-  path    = gwas_folder,
+  path = gwas_folder,
   pattern = "_model2_results\\.assoc\\.linear$",
   transform_fun = function(dt) {
-    dt[, .( SNPID    = SNP,
-            n_total  = NMISS,
-            Chr      = CHR,
-            Position = BP,
-            Beta     = BETA,
-            SE       = SE,
-            Pval     = P )]
+    dt[, .(
+      SNPID = SNP,
+      n_total = NMISS,
+      Chr = CHR,
+      Position = BP,
+      Beta = BETA,
+      SE = SE,
+      Pval = P
+    )]
   }
 )
 
@@ -71,34 +72,31 @@ model2_results <- read_and_bind(
 # 4) Read & reshape allele frequency, HWE and call‐rate across all chrs
 #-------------------------------------------------------------------------------
 freq_info <- read_and_bind(
-  path    = gwas_folder,
+  path = gwas_folder,
   pattern = "_allele_freq\\.frq$",
   transform_fun = function(dt) {
-    dt[, .( SNPID         = SNP,
-            AF_coded_all  = MAF )]
+    dt[, .(SNPID = SNP, AF_coded_all = MAF)]
   }
 )
 
 hwe_info <- read_and_bind(
-  path    = gwas_folder,
+  path = gwas_folder,
   pattern = "_hwe\\.hwe$",
   transform_fun = function(dt) {
-    dt[, .( SNPID    = SNP,
-            HWE_pval = P )]
+    dt[, .(SNPID = SNP, HWE_pval = P)]
   }
 )
 
 callrate_info <- read_and_bind(
-  path    = gwas_folder,
+  path = gwas_folder,
   pattern = "_callrate\\.lmiss$",
   transform_fun = function(dt) {
-    dt[, .( SNPID   = SNP,
-            Callrate = 1 - F_MISS )]
+    dt[, .(SNPID = SNP, Callrate = 1 - F_MISS)]
   }
 )
 
 # merge frequency/HWE/callrate
-merged_data <- merge(hwe_info,    freq_info,    by = "SNPID")
+merged_data <- merge(hwe_info, freq_info, by = "SNPID")
 merged_data <- merge(merged_data, callrate_info, by = "SNPID")
 
 #-------------------------------------------------------------------------------
@@ -109,32 +107,33 @@ if (file.exists(imputation_rds)) {
   imputation_data <- readRDS(imputation_rds)
 } else {
   # read all .info files in imp_folder
-  info_files <- list.files(path       = imp_folder,
-                           pattern    = "\\.info$",
-                           full.names = TRUE)
-  imputation_data <- rbindlist(lapply(info_files, function(f) {
-    dt <- fread(f)
-    # split SNP column into Chr and Position
-    tmp <- tstrsplit(dt$SNP, ":", keep = 1:2)
-    dt[, Chr      := as.integer(tmp[[1]])]
-    dt[, Position := as.integer(tmp[[2]])]
-    # recode
-    dt[, Imputed      := fifelse(Genotyped == "Imputed", 1L, 0L)]
-    dt[, Used_for_imp := fifelse(Genotyped == "Genotyped", 1L, 0L)]
-    setnames(dt,
-             old = c("ALT(1)", "REF(0)"),
-             new = c("Coded_all","Noncoded_all"))
-    dt[, .(Chr,
-           Position,
-           Imputed,
-           Used_for_imp,
-           Coded_all,
-           Noncoded_all)]
-  }), use.names = TRUE, fill = TRUE)
+  info_files <- list.files(
+    path = imp_folder,
+    pattern = "\\.info$",
+    full.names = TRUE
+  )
+  imputation_data <- rbindlist(
+    lapply(info_files, function(f) {
+      dt <- fread(f)
+      # split SNP column into Chr and Position
+      tmp <- tstrsplit(dt$SNP, ":", keep = 1:2)
+      dt[, Chr := as.integer(tmp[[1]])]
+      dt[, Position := as.integer(tmp[[2]])]
+      # recode
+      dt[, Imputed := fifelse(Genotyped == "Imputed", 1L, 0L)]
+      dt[, Used_for_imp := fifelse(Genotyped == "Genotyped", 1L, 0L)]
+      setnames(
+        dt,
+        old = c("ALT(1)", "REF(0)"),
+        new = c("Coded_all", "Noncoded_all")
+      )
+      dt[, .(Chr, Position, Imputed, Used_for_imp, Coded_all, Noncoded_all)]
+    }),
+    use.names = TRUE,
+    fill = TRUE
+  )
 
-  pos_info <- model1_results[, .(SNPID = SNPID,
-                                 Chr = Chr,
-                                 Position = Position)]
+  pos_info <- model1_results[, .(SNPID = SNPID, Chr = Chr, Position = Position)]
   imputation_data <-
     imputation_data[pos_info, on = .(Chr, Position), nomatch = 0]
 
@@ -147,16 +146,15 @@ if (file.exists(imputation_rds)) {
 #-------------------------------------------------------------------------------
 
 # combine imputation + QC metrics
-setkey(imputation_data,   Chr, Position)
-setkey(merged_data,       SNPID)
-setkey(model1_results,    SNPID)
-setkey(model2_results,    SNPID)
+setkey(imputation_data, Chr, Position)
+setkey(merged_data, SNPID)
+setkey(model1_results, SNPID)
+setkey(model2_results, SNPID)
 
 # join by SNPID
-final_meta <- merge(imputation_data,
-                    merged_data,
-                    by = "SNPID",
-                    all = FALSE)[, -c("Chr", "Position")]
+final_meta <- merge(imputation_data, merged_data, by = "SNPID", all = FALSE)[,
+  -c("Chr", "Position")
+]
 final_meta[, Strand_genome := "+"]
 final_meta[, Oevar_imp := NA]
 final_meta[Imputed == 1, HWE_pval := NA]
@@ -171,10 +169,22 @@ model2_merged[!grepl("^rs", SNPID), SNPID := ""]
 
 # column order
 column_order <- c(
-  "SNPID", "Chr", "Position",
-  "Coded_all","Noncoded_all","Strand_genome",
-  "Beta","SE","Pval","AF_coded_all","HWE_pval","Callrate","n_total",
-  "Imputed","Used_for_imp","Oevar_imp"
+  "SNPID",
+  "Chr",
+  "Position",
+  "Coded_all",
+  "Noncoded_all",
+  "Strand_genome",
+  "Beta",
+  "SE",
+  "Pval",
+  "AF_coded_all",
+  "HWE_pval",
+  "Callrate",
+  "n_total",
+  "Imputed",
+  "Used_for_imp",
+  "Oevar_imp"
 )
 
 # Reorder the columns
@@ -188,10 +198,18 @@ test <- model1_merged[model1_merged$Pval < 0.000005, ]
 #-------------------------------------------------------------------------------
 # 7) Write out final tables
 #-------------------------------------------------------------------------------
-fwrite(model1_merged,
-       file   = file.path(gwas_folder, "model1.txt"),
-       sep    = "\t", na = "NA", quote = FALSE)
+fwrite(
+  model1_merged,
+  file = file.path(gwas_folder, "model1.txt"),
+  sep = "\t",
+  na = "NA",
+  quote = FALSE
+)
 
-fwrite(model2_merged,
-       file   = file.path(gwas_folder, "model2.txt"),
-       sep    = "\t", na = "NA", quote = FALSE)
+fwrite(
+  model2_merged,
+  file = file.path(gwas_folder, "model2.txt"),
+  sep = "\t",
+  na = "NA",
+  quote = FALSE
+)
