@@ -51,6 +51,9 @@
               air-formatter
               (python3.withPackages (
                 python-pkgs: with python-pkgs; [
+                  pandas
+                  python-dotenv
+                  requests
                   (buildPythonPackage rec {
                     pname = "pycap";
                     version = "2.6.0";
