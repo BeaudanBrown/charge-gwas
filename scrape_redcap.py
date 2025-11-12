@@ -6,8 +6,8 @@ import csv
 load_dotenv()
 
 api_url = 'https://redcap.helix.monash.edu/api/'
-api_key = os.environ['API_KEY']
-gwas_folder = os.environ['API_KEY']
+api_key = os.environ['REDCAP_API_KEY']
+gwas_folder = os.environ['GWAS_FOLDER']
 
 proj = project.Project(api_url, api_key)
 records = proj.export_records(fields=["idno", "sex", "age", "education", "vrii_total_raw"], events=["baseline_arm_1"])
@@ -19,7 +19,7 @@ records = [{
     "vrii_total_raw": rec["vrii_total_raw"],
     } for rec in records if rec["idno"].endswith("--1")]
 
-fam_file = gwas_folder + "./outbed.fam"
+fam_file = gwas_folder + "/chr1.fam"
 
 with open(fam_file, 'r', newline="") as file:
    # Read the file line by line

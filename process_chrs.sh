@@ -2,12 +2,13 @@
 set -euo pipefail
 
 # adjust these if needed
-WORKDIR=qc
+WORKDIR=bed
 COV1=covars.txt
 COV2=covars2.txt
 PHENO=pheno.txt
 
-for chr in {1..22}; do
+process_chromosome() {
+  chr=$1
   echo "---- Processing chr${chr} ----"
   PREFIX=${WORKDIR}/chr${chr}
 
@@ -39,7 +40,7 @@ for chr in {1..22}; do
     --make-bed \
     --out ${PREFIX}_qc4
 
-  # 5) keep autosomes only (optional if your files are already per‐chr)
+  # 5) keep autosomes only
   plink \
     --bfile ${PREFIX}_qc4 \
     --autosome \
@@ -84,12 +85,11 @@ for chr in {1..22}; do
 
   # ===== clean up all QC intermediates =====
   rm -f ${PREFIX}_qc1.* ${PREFIX}_qc2.* ${PREFIX}_qc3.* ${PREFIX}_qc4.* ${PREFIX}_qc5.*
+}
 
-done
+# Export the function and variables so parallel can see them
+export -f process_chromosome
+export WORKDIR COV1 COV2 PHENO
 
-echo "Done.  For each chromosome 1–22 you now have exactly these five files:"
-echo "  chrN_model1_results.*"
-echo "  chrN_model2_results.*"
-echo "  chrN_allele_freq.*"
-echo "  chrN_hwe.*"
-echo "  chrN_callrate.*"
+# Run in parallel
+parallel process_chromosome ::: {1..22}

@@ -40,6 +40,7 @@ model1_results <- read_and_bind(
     )]
   }
 )
+
 # library(qqman) # nolint: commented_code_linter.
 # manhattan(
 #   model1_results,
@@ -112,23 +113,28 @@ if (file.exists(imputation_rds)) {
     pattern = "\\.info$",
     full.names = TRUE
   )
+  library(parallel)
   imputation_data <- rbindlist(
-    lapply(info_files, function(f) {
-      dt <- fread(f)
-      # split SNP column into Chr and Position
-      tmp <- tstrsplit(dt$SNP, ":", keep = 1:2)
-      dt[, Chr := as.integer(tmp[[1]])]
-      dt[, Position := as.integer(tmp[[2]])]
-      # recode
-      dt[, Imputed := fifelse(Genotyped == "Imputed", 1L, 0L)]
-      dt[, Used_for_imp := fifelse(Genotyped == "Genotyped", 1L, 0L)]
-      setnames(
-        dt,
-        old = c("ALT(1)", "REF(0)"),
-        new = c("Coded_all", "Noncoded_all")
-      )
-      dt[, .(Chr, Position, Imputed, Used_for_imp, Coded_all, Noncoded_all)]
-    }),
+    mclapply(
+      info_files,
+      function(f) {
+        dt <- fread(f)
+        # split SNP column into Chr and Position
+        tmp <- tstrsplit(dt$SNP, ":", keep = 1:2)
+        dt[, Chr := as.integer(tmp[[1]])]
+        dt[, Position := as.integer(tmp[[2]])]
+        # recode
+        dt[, Imputed := fifelse(Genotyped == "Imputed", 1L, 0L)]
+        dt[, Used_for_imp := fifelse(Genotyped == "Genotyped", 1L, 0L)]
+        setnames(
+          dt,
+          old = c("ALT(1)", "REF(0)"),
+          new = c("Coded_all", "Noncoded_all")
+        )
+        dt[, .(Chr, Position, Imputed, Used_for_imp, Coded_all, Noncoded_all)]
+      },
+      mc.cores = 11
+    ),
     use.names = TRUE,
     fill = TRUE
   )
@@ -146,6 +152,8 @@ if (file.exists(imputation_rds)) {
 #-------------------------------------------------------------------------------
 
 # combine imputation + QC metrics
+imputation_data <-
+  imputation_data[nchar(Coded_all) == 1 & nchar(Noncoded_all) == 1]
 setkey(imputation_data, Chr, Position)
 setkey(merged_data, SNPID)
 setkey(model1_results, SNPID)
@@ -163,7 +171,7 @@ final_meta[Imputed == 1, HWE_pval := NA]
 model1_merged <- merge(model1_results, final_meta, by = "SNPID")
 model2_merged <- merge(model2_results, final_meta, by = "SNPID")
 
-# Only have SNPID for rsIDs
+# Only have SNPID for rsIDs (we don't have any)
 model1_merged[!grepl("^rs", SNPID), SNPID := ""]
 model2_merged[!grepl("^rs", SNPID), SNPID := ""]
 

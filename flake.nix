@@ -44,8 +44,10 @@
           packages =
             with pkgs;
             [
+              parallel
               plink-ng
               bcftools
+              htslib
               R
               quarto
               air-formatter

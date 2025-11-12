@@ -1,22 +1,22 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-OUT="qc/all_chrs"
+OUT="bed/all_chrs"
 
 # Step 1: initialize OUT with chr1
 echo "Initializing ${OUT} from chr1..."
-cp qc/chr1.bed   ${OUT}.bed
-cp qc/chr1.bim   ${OUT}.bim
-cp qc/chr1.fam   ${OUT}.fam
+cp bed/chr1.bed   ${OUT}.bed
+cp bed/chr1.bim   ${OUT}.bim
+cp bed/chr1.fam   ${OUT}.fam
 
+CHRS=$(echo {2..22})
 # Step 2: merge chromosomes 2..22 one at a time
 for i in {2..22}; do
-  CHR="qc/chr${i}"
+  CHR="bed/chr${i}"
   echo "Merging ${CHR} into ${OUT}..."
   plink \
     --bfile ${OUT} \
     --bmerge ${CHR} \
-    --memory 25000 \
     --out ${OUT}_tmp
 
   # on success, replace OUT with the merged version
