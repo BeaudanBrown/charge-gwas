@@ -74,6 +74,8 @@
               ))
             ]
             ++ (with rPackages; [
+              targets
+              tarchetypes
               languageserver
               qqman
               data_table
