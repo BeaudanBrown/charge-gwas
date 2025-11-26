@@ -46,7 +46,9 @@
             [
               parallel
               plink-ng
+              dos2unix
               bcftools
+              samtools
               htslib
               R
               quarto

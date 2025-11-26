@@ -9,3 +9,11 @@ plink_scripts.sh
 qc
 tmp
 .pre-commit-config.yaml
+*.vcf
+*.gzi
+*.fai
+*.ids
+*.tmp
+*.gz
+*.txt
+*.log

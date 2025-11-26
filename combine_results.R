@@ -27,7 +27,7 @@ read_and_bind <- function(path, pattern, transform_fun = identity) {
 #-------------------------------------------------------------------------------
 model1_results <- read_and_bind(
   path = gwas_folder,
-  pattern = "_model1_results\\.assoc\\.linear$",
+  pattern = "_model1_results\\.P1\\.assoc\\.linear$",
   transform_fun = function(dt) {
     dt[, .(
       SNPID = SNP,
@@ -42,20 +42,22 @@ model1_results <- read_and_bind(
 )
 
 # library(qqman) # nolint: commented_code_linter.
+# png("manhattan_plot.png", width = 1200, height = 600, res = 100)
 # manhattan(
 #   model1_results,
 #   chr = "Chr",
 #   bp = "Position",
 #   p = "Pval",
-#   snp = "SNPID",
+#   snp = "SNPID"
 # )
+# dev.off()
 
 #-------------------------------------------------------------------------------
 # 3) Read & reshape model2 results across all chrs
 #-------------------------------------------------------------------------------
 model2_results <- read_and_bind(
   path = gwas_folder,
-  pattern = "_model2_results\\.assoc\\.linear$",
+  pattern = "_model2_results\\.P1\\.assoc\\.linear$",
   transform_fun = function(dt) {
     dt[, .(
       SNPID = SNP,
@@ -84,7 +86,7 @@ hwe_info <- read_and_bind(
   path = gwas_folder,
   pattern = "_hwe\\.hwe$",
   transform_fun = function(dt) {
-    dt[, .(SNPID = SNP, HWE_pval = P)]
+    dt[, .(SNPID = SNP, Coded_all = A1, Noncoded_all = A2, HWE_pval = P)]
   }
 )
 
@@ -208,7 +210,8 @@ test <- model1_merged[model1_merged$Pval < 0.000005, ]
 #-------------------------------------------------------------------------------
 fwrite(
   model1_merged,
-  file = file.path(gwas_folder, "model1.txt"),
+  file = file.path("./results/model1.txt"),
+  # file = file.path(gwas_folder, "model1.txt"),
   sep = "\t",
   na = "NA",
   quote = FALSE
@@ -216,7 +219,8 @@ fwrite(
 
 fwrite(
   model2_merged,
-  file = file.path(gwas_folder, "model2.txt"),
+  # file = file.path(gwas_folder, "model2.txt"),
+  file = file.path("./results/model2.txt"),
   sep = "\t",
   na = "NA",
   quote = FALSE
