@@ -1,8 +1,62 @@
-#===============================================================================
-# Helper Functions for GWAS Results Processing Pipeline
-#===============================================================================
+#-------------------------------------------------------------------------------
+# Fetch REDCap data and create covariate/phenotype files
+#-------------------------------------------------------------------------------
+fetch_redcap_data <- function(redcap, fam_file, output_dir = ".") {
+  result <- exportRecordsTyped(
+    rcon = redcap$bach,
+    fields = c("idno", "sex", "age", "education", "vrii_total_raw"),
+    events = c("baseline_arm_1"),
+  )
 
-library(data.table)
+  records <- as.data.table(result)
+
+  # Remove invalid records
+  records <- records[grepl("--1$", idno)]
+  records[, idno := sub("--1$", "", idno)]
+  records <- records[grepl("^0.{3}$", idno)]
+
+  records[, sex := as.numeric(sex)]
+
+  fam_data <- fread(
+    fam_file,
+    header = FALSE,
+    col.names = c("FID", "IID", "V3", "V4", "V5", "V6")
+  )
+  fam_data[, idno := tstrsplit(IID, "BACH", fixed = TRUE, keep = 2)]
+  matched_records <- records[fam_data, on = .(idno), nomatch = 0]
+  setorder(matched_records, FID)
+
+  pheno_file <- file.path(output_dir, "pheno.txt")
+  fwrite(
+    matched_records[, .(FID, IID, vrii_total_raw)],
+    file = pheno_file,
+    sep = " ",
+    col.names = FALSE,
+    quote = FALSE
+  )
+
+  # model 1: sex, age
+  covars_file <- file.path(output_dir, "covars.txt")
+  fwrite(
+    matched_records[, .(FID, IID, sex, age)],
+    file = covars_file,
+    sep = " ",
+    col.names = FALSE,
+    quote = FALSE
+  )
+
+  # model 2: sex, age, education
+  covars2_file <- file.path(output_dir, "covars2.txt")
+  fwrite(
+    matched_records[, .(FID, IID, sex, age, education)],
+    file = covars2_file,
+    sep = " ",
+    col.names = FALSE,
+    quote = FALSE
+  )
+
+  c(pheno_file, covars_file, covars2_file)
+}
 
 #-------------------------------------------------------------------------------
 # Read and bind files matching a pattern
@@ -41,7 +95,7 @@ read_gwas_results <- function(gwas_folder, pattern) {
 }
 
 #-------------------------------------------------------------------------------
-# Read all QC metrics (frequency, HWE, callrate)
+# Read all QC metrics
 #-------------------------------------------------------------------------------
 read_qc_metrics <- function(gwas_folder) {
   freq_info <- read_and_bind(
@@ -76,7 +130,7 @@ read_qc_metrics <- function(gwas_folder) {
 }
 
 #-------------------------------------------------------------------------------
-# Merge QC metrics into single data.table
+# Merge QC metrics
 #-------------------------------------------------------------------------------
 merge_qc_metrics <- function(qc_list) {
   merged_data <- merge(qc_list$hwe, qc_list$freq, by = "SNPID")
@@ -85,15 +139,12 @@ merge_qc_metrics <- function(qc_list) {
 }
 
 #-------------------------------------------------------------------------------
-# Load or build imputation info (with caching)
+# Load or build imputation info
 #-------------------------------------------------------------------------------
 load_imputation_info <- function(imp_folder, cache_path, pos_info, cores = 11) {
   if (file.exists(cache_path)) {
-    message("Loading cached imputation data from: ", cache_path)
     imputation_data <- readRDS(cache_path)
   } else {
-    message("Building imputation data from .info files...")
-
     # Read all .info files in imp_folder
     info_files <- list.files(
       path = imp_folder,
@@ -101,11 +152,6 @@ load_imputation_info <- function(imp_folder, cache_path, pos_info, cores = 11) {
       full.names = TRUE
     )
 
-    if (length(info_files) == 0L) {
-      stop("No .info files found in ", imp_folder)
-    }
-
-    library(parallel)
     imputation_data <- rbindlist(
       mclapply(
         info_files,
@@ -118,13 +164,7 @@ load_imputation_info <- function(imp_folder, cache_path, pos_info, cores = 11) {
           # Recode imputation status
           dt[, Imputed := fifelse(Genotyped == "Imputed", 1L, 0L)]
           dt[, Used_for_imp := fifelse(Genotyped == "Genotyped", 1L, 0L)]
-          # Rename allele columns
-          setnames(
-            dt,
-            old = c("ALT(1)", "REF(0)"),
-            new = c("Coded_all", "Noncoded_all")
-          )
-          dt[, .(Chr, Position, Imputed, Used_for_imp, Coded_all, Noncoded_all)]
+          dt[, .(Chr, Position, Imputed, Used_for_imp)]
         },
         mc.cores = cores
       ),
@@ -132,7 +172,6 @@ load_imputation_info <- function(imp_folder, cache_path, pos_info, cores = 11) {
       fill = TRUE
     )
 
-    # Join with position info to get SNPID
     imputation_data <- imputation_data[
       pos_info,
       on = .(Chr, Position),
@@ -142,26 +181,23 @@ load_imputation_info <- function(imp_folder, cache_path, pos_info, cores = 11) {
     # Save cache
     dir.create(dirname(cache_path), showWarnings = FALSE, recursive = TRUE)
     saveRDS(imputation_data, cache_path)
-    message("Cached imputation data to: ", cache_path)
   }
 
-  imputation_data
+  imputation_data[, .(Chr, Position, Imputed, Used_for_imp, SNPID)]
 }
 
 #-------------------------------------------------------------------------------
-# Create final metadata by merging imputation and QC data
+# Create final metadata
 #-------------------------------------------------------------------------------
 create_final_metadata <- function(imputation_data, merged_qc) {
-  # Filter to biallelic SNPs only (single nucleotide)
-  imputation_data <- imputation_data[
+  # Filter to biallelic SNPs only
+  merged_qc <- merged_qc[
     nchar(Coded_all) == 1 & nchar(Noncoded_all) == 1
   ]
 
-  # Set keys for efficient merging
   setkey(imputation_data, Chr, Position)
   setkey(merged_qc, SNPID)
 
-  # Join by SNPID
   final_meta <- merge(imputation_data, merged_qc, by = "SNPID", all = FALSE)[,
     -c("Chr", "Position")
   ]
@@ -169,8 +205,7 @@ create_final_metadata <- function(imputation_data, merged_qc) {
   # Add constant fields
   final_meta[, Strand_genome := "+"]
   final_meta[, Oevar_imp := NA]
-
-  # Set HWE p-value to NA for imputed SNPs (HWE doesn't apply to imputed variants)
+  # HWE doesn't apply to imputed variants
   final_meta[Imputed == 1, HWE_pval := NA]
 
   final_meta
@@ -180,21 +215,11 @@ create_final_metadata <- function(imputation_data, merged_qc) {
 # Merge model results with metadata and format output
 #-------------------------------------------------------------------------------
 merge_model_metadata <- function(model_results, final_meta, column_order) {
-  # Set key for efficient merging
   setkey(model_results, SNPID)
-
-  # Merge model results with metadata
   merged <- merge(model_results, final_meta, by = "SNPID")
-
-  # Blank out non-rsID SNPIDs (we don't have rsIDs in this dataset)
   merged[!grepl("^rs", SNPID), SNPID := ""]
-
-  # Reorder columns
   setcolorder(merged, column_order)
-
-  # Sort by chromosome and position
   setorder(merged, Chr, Position)
-
   merged
 }
 
@@ -202,9 +227,7 @@ merge_model_metadata <- function(model_results, final_meta, column_order) {
 # Write GWAS output file
 #-------------------------------------------------------------------------------
 write_gwas_output <- function(data, output_path) {
-  # Ensure directory exists
   dir.create(dirname(output_path), showWarnings = FALSE, recursive = TRUE)
-
   fwrite(
     data,
     file = output_path,
@@ -212,8 +235,6 @@ write_gwas_output <- function(data, output_path) {
     na = "NA",
     quote = FALSE
   )
-
-  message("Wrote output to: ", output_path)
   output_path
 }
 
@@ -221,15 +242,7 @@ write_gwas_output <- function(data, output_path) {
 # Create Manhattan plot (optional)
 #-------------------------------------------------------------------------------
 create_manhattan_plot <- function(gwas_data, output_path) {
-  if (!requireNamespace("qqman", quietly = TRUE)) {
-    stop(
-      "Package 'qqman' is required for manhattan plots. Install with: install.packages('qqman')"
-    )
-  }
-
-  # Ensure directory exists
   dir.create(dirname(output_path), showWarnings = FALSE, recursive = TRUE)
-
   png(output_path, width = 1200, height = 600, res = 100)
   qqman::manhattan(
     gwas_data,
@@ -239,7 +252,5 @@ create_manhattan_plot <- function(gwas_data, output_path) {
     snp = "SNPID"
   )
   dev.off()
-
-  message("Created Manhattan plot: ", output_path)
   output_path
 }

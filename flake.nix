@@ -74,7 +74,9 @@
               ))
             ]
             ++ (with rPackages; [
+              redcapAPI
               targets
+              crew
               tarchetypes
               languageserver
               qqman

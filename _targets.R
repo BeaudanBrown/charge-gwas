@@ -1,50 +1,29 @@
-#===============================================================================
-# Targets Pipeline for GWAS Results Processing
-#===============================================================================
-#
-# This pipeline processes GWAS results from PLINK, merges them with QC metrics
-# and imputation info, and produces final formatted output tables.
-#
-# Usage:
-#   targets::tar_make()                      # Run main pipeline
-#   targets::tar_make(names = "manhattan_model1")  # Include manhattan plot
-#   targets::tar_visnetwork()                # Visualize pipeline
-#   targets::tar_read(model1_merged)         # Read results
-#
-#===============================================================================
-
 library(targets)
 library(data.table)
 library(dotenv)
+library(redcapAPI)
 
-# Load helper functions
 source("R/functions.R")
 
-# Set target options
 tar_option_set(
-  packages = c("data.table", "parallel"),
+  packages = c("data.table", "parallel", "redcapAPI"),
   format = "rds"
 )
 
-# Load configuration from .env
 load_dot_env()
-
-#===============================================================================
-# Pipeline Definition
-#===============================================================================
+api_url <- Sys.getenv("REDCAP_API_URL")
+redcap <- unlockREDCap(c(bach = "bach"), keyring = "bach", url = api_url)
 
 list(
-  #-----------------------------------------------------------------------------
-  # Configuration
-  #-----------------------------------------------------------------------------
   tar_target(
     config,
     list(
       imp_folder = Sys.getenv("IMPUTATION_FOLDER"),
-      gwas_folder = Sys.getenv("GWAS_FOLDER"),
-      cache_path = "./tmp/imputation_data.rds",
-      output_dir = "./results",
-      cores = 11,
+      cache_path = Sys.getenv("CACHE_PATH"),
+      output_dir = Sys.getenv("OUTPUT_DIR"),
+      meta_dir = file.path(Sys.getenv("MERGED_FOLDER"), "meta"),
+      bed_dir = file.path(Sys.getenv("MERGED_FOLDER"), "bed"),
+      final_dir = file.path(Sys.getenv("MERGED_FOLDER"), "all_chrs"),
       patterns = list(
         model1 = "_model1_results\\.P1\\.assoc\\.linear$",
         model2 = "_model2_results\\.P1\\.assoc\\.linear$",
@@ -75,46 +54,154 @@ list(
   ),
 
   #-----------------------------------------------------------------------------
-  # Input File Tracking (automatically detects file changes)
+  # Bash Stage Scripts
+  #-----------------------------------------------------------------------------
+  tar_target(
+    stage1_script,
+    "bash/stage1_normalize_merge.sh",
+    format = "file"
+  ),
+
+  tar_target(
+    stage2_script,
+    "bash/stage2_prepare_covariates.sh",
+    format = "file"
+  ),
+
+  tar_target(
+    stage3_script,
+    "bash/stage3_merge_qc.sh",
+    format = "file"
+  ),
+
+  tar_target(
+    stage4_script,
+    "bash/stage4_gwas.sh",
+    format = "file"
+  ),
+
+  #-----------------------------------------------------------------------------
+  # Run Bash Stages
+  #-----------------------------------------------------------------------------
+  tar_target(
+    stage1_outputs,
+    {
+      result <- system2(
+        "bash",
+        args = c(stage1_script),
+        stdout = TRUE,
+        stderr = TRUE
+      )
+      if (!is.null(attr(result, "status"))) {
+        stop("Stage 1 failed with exit code: ", attr(result, "status"))
+      }
+      list.files(
+        config$bed_dir,
+        pattern = "chr.*\\.(bed|bim|fam)$",
+        full.names = TRUE
+      )
+    },
+    format = "file"
+  ),
+
+  #-----------------------------------------------------------------------------
+  # REDCap Data Fetch
+  #-----------------------------------------------------------------------------
+  tar_target(
+    redcap_outputs,
+    {
+      stage1_outputs
+      fetch_redcap_data(
+        redcap = redcap,
+        fam_file = file.path(config$bed_dir, "chr1.fam"),
+        output_dir = config$meta_dir
+      )
+    },
+    format = "file"
+  ),
+
+  tar_target(
+    stage2_outputs,
+    {
+      stage1_outputs
+      redcap_outputs
+      result <- system2(
+        "bash",
+        args = c(stage2_script),
+        stdout = TRUE,
+        stderr = TRUE
+      )
+      c(
+        file.path(config$meta_dir, "covars_with_batch.txt"),
+        file.path(config$meta_dir, "covars2_with_batch.txt"),
+        file.path(config$meta_dir, "pheno.txt")
+      )
+    },
+    format = "file"
+  ),
+
+  tar_target(
+    stage3_outputs,
+    {
+      stage2_outputs
+      result <- system2(
+        "bash",
+        args = c(stage3_script),
+        stdout = TRUE,
+        stderr = TRUE
+      )
+      c(
+        file.path(config$final_dir, "all_chrs_clean.bed"),
+        file.path(config$final_dir, "all_chrs_clean.bim"),
+        file.path(config$final_dir, "all_chrs_clean.fam")
+      )
+    },
+    format = "file"
+  ),
+
+  tar_target(
+    stage4_outputs,
+    {
+      stage3_outputs
+      result <- system2(
+        "bash",
+        args = c(stage4_script),
+        stdout = TRUE,
+        stderr = TRUE
+      )
+      prefix <- file.path(config$final_dir, "all_chrs")
+      c(
+        paste0(prefix, "_model1_results.P1.assoc.linear"),
+        paste0(prefix, "_model2_results.P1.assoc.linear"),
+        paste0(prefix, "_allele_freq.frq"),
+        paste0(prefix, "_hwe.hwe"),
+        paste0(prefix, "_callrate.lmiss")
+      )
+    },
+    format = "file"
+  ),
+
+  #-----------------------------------------------------------------------------
+  # Input File Tracking
   #-----------------------------------------------------------------------------
   tar_target(
     gwas_files_model1,
-    list.files(
-      config$gwas_folder,
-      pattern = config$patterns$model1,
-      full.names = TRUE
-    ),
+    stage4_outputs[grepl(config$patterns$model1, stage4_outputs)],
     format = "file"
   ),
 
   tar_target(
     gwas_files_model2,
-    list.files(
-      config$gwas_folder,
-      pattern = config$patterns$model2,
-      full.names = TRUE
-    ),
+    stage4_outputs[grepl(config$patterns$model2, stage4_outputs)],
     format = "file"
   ),
 
   tar_target(
     gwas_files_qc,
     c(
-      list.files(
-        config$gwas_folder,
-        pattern = config$patterns$freq,
-        full.names = TRUE
-      ),
-      list.files(
-        config$gwas_folder,
-        pattern = config$patterns$hwe,
-        full.names = TRUE
-      ),
-      list.files(
-        config$gwas_folder,
-        pattern = config$patterns$callrate,
-        full.names = TRUE
-      )
+      stage4_outputs[grepl(config$patterns$freq, stage4_outputs)],
+      stage4_outputs[grepl(config$patterns$hwe, stage4_outputs)],
+      stage4_outputs[grepl(config$patterns$callrate, stage4_outputs)]
     ),
     format = "file"
   ),
@@ -130,21 +217,21 @@ list(
   ),
 
   #-----------------------------------------------------------------------------
-  # Read GWAS Results (can run in parallel)
+  # Read GWAS Results
   #-----------------------------------------------------------------------------
   tar_target(
     model1_results,
     {
-      gwas_files_model1 # Dependency to track file changes
-      read_gwas_results(config$gwas_folder, config$patterns$model1)
+      gwas_files_model1
+      read_gwas_results(config$bed_dir, config$patterns$model1)
     }
   ),
 
   tar_target(
     model2_results,
     {
-      gwas_files_model2 # Dependency to track file changes
-      read_gwas_results(config$gwas_folder, config$patterns$model2)
+      gwas_files_model2
+      read_gwas_results(config$bed_dir, config$patterns$model2)
     }
   ),
 
@@ -154,8 +241,8 @@ list(
   tar_target(
     qc_metrics,
     {
-      gwas_files_qc # Dependency to track file changes
-      read_qc_metrics(config$gwas_folder)
+      gwas_files_qc
+      read_qc_metrics(config$bed_dir)
     }
   ),
 
@@ -165,18 +252,17 @@ list(
   ),
 
   #-----------------------------------------------------------------------------
-  # Load Imputation Info (with caching)
+  # Load Imputation Info
   #-----------------------------------------------------------------------------
   tar_target(
     imputation_data,
     {
-      imputation_files # Dependency to track file changes
+      imputation_files
       pos_info <- model1_results[, .(SNPID, Chr, Position)]
       load_imputation_info(
         config$imp_folder,
         config$cache_path,
-        pos_info,
-        config$cores
+        pos_info
       )
     }
   ),
@@ -221,28 +307,5 @@ list(
       file.path(config$output_dir, "model2.txt")
     ),
     format = "file"
-  ),
-
-  #-----------------------------------------------------------------------------
-  # Manhattan Plots (Optional - only run if explicitly requested)
-  #-----------------------------------------------------------------------------
-  tar_target(
-    manhattan_model1,
-    create_manhattan_plot(
-      model1_merged,
-      file.path(config$output_dir, "manhattan_model1.png")
-    ),
-    format = "file",
-    cue = tar_cue("never") # Never runs automatically
-  ),
-
-  tar_target(
-    manhattan_model2,
-    create_manhattan_plot(
-      model2_merged,
-      file.path(config$output_dir, "manhattan_model2.png")
-    ),
-    format = "file",
-    cue = tar_cue("never") # Never runs automatically
   )
 )
