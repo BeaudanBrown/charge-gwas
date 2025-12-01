@@ -1,22 +1,72 @@
-These scripts were used to prepare genomic and visual memory data from the BACH Cohort Study to be included in the CHARGE Cognitive and Neurology working group GWAS.
-Quality control and analysis of genomic data was done using plink v1.90b3 using the following commands.
+# BACH Cohort Study GWAS Pipeline
 
-plink --bfile <initial_bed_prefix> --mind 0.05 --make-bed --out qc/qc1
-plink --bfile qc/qc1 --check-sex --out qc/sexcheck
-plink --bfile qc/qc1 --remove qc/sexcheck.sexcheck --make-bed --out qc/qc2
-plink --bfile qc/qc2 --geno 0.05 --make-bed --out qc/qc3
-plink --bfile qc/qc3 --maf 0.01 --make-bed --out qc/qc4
-plink --bfile qc/qc4 --hwe 1e-6 --make-bed --out qc/qc5
-plink --bfile qc/qc5 --autosome --make-bed --out qc/qc6
-plink --bfile qc/qc6 --covar covars.txt --pheno pheno.txt --linear no-x-sex hide-covar --ci 0.95 --xchr-model 0 --allow-no-sex --out qc/model1_results
-plink --bfile qc/qc6 --covar covars2.txt --pheno pheno.txt --linear no-x-sex hide-covar --ci 0.95 --xchr-model 0 --allow-no-sex --out qc/model2_results
+GWAS pipeline for analyzing visual memory phenotypes from the BACH Cohort Study. Prepares results for the CHARGE Cognitive and Neurology working group.
 
-plink --bfile qc/qc6 --freq --out qc/allele_freq
-plink --bfile qc/qc6 --hardy --out qc/hwe
-plink --bfile qc/qc6 --missing --out qc/callrate
+## Overview
 
-scrape_redcap.py is a simple python script used to extract the phenotype and covariate data used for the analysis from the BACH Study REDCap database and associate that data with the IDs in the genetic data files.
-covars.txt contains age and sex data, while covars2.txt contains the same with the addition of total years of education per participant.
-pheno.txt contains the raw scores from the Delayed Visual Reproduction test from WMS.
+This pipeline uses R `targets` for workflow orchestration, combining bash scripts for genomic data processing with R functions for phenotype management and output formatting. The pipeline merges two genotyping batches (B1 and B2), applies quality control, and runs parallel GWAS analyses.
 
-combine_results.R takes the GWAS results and other plink outputs, merges them together and generates output files in the requested format by the CHARGE working group.
+## Pipeline Stages
+
+**Stage 1: VCF Normalization & Merging**
+- Normalizes VCF files and aligns to reference genome (hs37d5)
+- Filters variants by imputation quality (R² ≥ 0.5)
+- Merges batches B1 and B2
+- Converts to PLINK format
+- Processes chromosomes 1-22 in parallel
+
+**Stage 2: Covariate Preparation**
+- Extracts sample IDs from merged genotype files
+- Creates batch identifier files
+- Merges batch information into covariate files
+
+**Stage 3: Merge & QC**
+- Merges all chromosomes into single dataset
+- Applies quality control filters:
+  - Sample missingness (mind): 0.05
+  - Variant missingness (geno): 0.05
+  - Minor allele frequency (maf): 0.01
+  - Hardy-Weinberg equilibrium (hwe): 1e-6
+  - Autosomal variants only
+
+**Stage 4: GWAS Execution**
+- Runs parallel GWAS for both models
+- Computes QC metrics (allele frequency, HWE, call rate)
+
+## GWAS Models
+
+**Model 1:** Phenotype ~ SNP + age + sex + batch
+**Model 2:** Phenotype ~ SNP + age + sex + education + batch
+
+Both models include batch correction to account for genotyping platform differences between B1 and B2.
+
+## Data Processing
+
+- **Phenotype/Covariate Data:** Fetched from REDCap database using `redcapAPI`, matched to genetic IDs
+- **Imputation Metadata:** Parsed from .info files, cached for efficiency
+- **QC Metrics:** Merged from frequency, HWE, and call rate analyses
+- **Final Datasets:** GWAS results combined with metadata (imputation R², allele freq, HWE p-values, call rates)
+
+## Key Files
+
+- `_targets.R` - Pipeline orchestration with dependency tracking
+- `R/functions.R` - Data processing functions (REDCap fetch, file I/O, metadata merging)
+- `bash/stage1_normalize_merge.sh` - VCF processing and batch merging
+- `bash/stage2_prepare_covariates.sh` - Batch identifier integration
+- `bash/stage3_merge_qc.sh` - Chromosome merging and quality control
+- `bash/stage4_gwas.sh` - GWAS execution and QC metrics
+- `flake.nix` - Reproducible development environment (plink-ng, bcftools, R packages)
+
+## Output Format
+
+Final results in `results/model1.txt` and `results/model2.txt` formatted for CHARGE consortium submission with 16 columns:
+
+- SNP, CHR, BP, Allele1, Allele2
+- Freq1 (Allele1 frequency)
+- FreqSE (standard error)
+- MinFreq, MaxFreq
+- Effect, StdErr
+- P-value, Direction
+- HetISq, HetChiSq, HetPVal
+
+All variants are biallelic SNPs passing QC thresholds, with complete imputation and association metadata.
